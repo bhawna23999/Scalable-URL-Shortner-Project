@@ -3,15 +3,15 @@ const shortid = require("shortid")
 const redis = require("redis");
 
 
-const isValid = function(value){
-    if(typeof value === 'undefined' || value === null) return false
-    if(typeof value === 'string' && value.trim().length === 0) return false
-    return true
-}
+// const isValid = function(value){
+//     if(typeof value === 'undefined' || value === null) return false
+//     if(typeof value === 'string' && value.trim().length === 0) return false
+//     return true
+// }
 
-const isValidRequestBody = function(requestBody){
-    return Object.keys(requestBody).length > 0
-}
+// const isValidRequestBody = function(requestBody){
+//     return Object.keys(requestBody).length > 0
+// }
 
 
 const { promisify } = require("util")
@@ -43,16 +43,10 @@ const shorten = async function(req,res){
 
     try
     {
-        let requestBody = req.body
-
-        if(!(isValidRequestBody)){
-            return res.status(400).send({status:false, message:'Please enter Details'})
-        }
-
         // Extract Param
-        const {longUrl} = requestBody 
+        const {longUrl} = req.body 
 
-        if(!isValid(longUrl)){
+        if(!longUrl){
             return res.status(400).send({status:false, message:'Long-Url is Required'})
         }
 
@@ -60,13 +54,20 @@ const shorten = async function(req,res){
             return res.status(400).send({status:false, message:'Plese enter valid Url'})
         }
 
-        const findUrl = await urlModel.findOne({longUrl:longUrl})
+        let cachedUrlData = await GET_ASYNC(`${longUrl}`)
 
-        if(findUrl){
-            return res.status(200).send({status:false, message:"This Url is already Registered"})
+        if(cachedUrlData){
+            return res.status(200).send({status:false, message:'This Url is already in Cache', redisData: JSON.parse(cachedUrlData)})
         }
 
-        let baseUrl = 'http://localhost:3000'
+        const findUrl = await urlModel.findOne({longUrl:longUrl}).select({_id:0, longUrl:1, shortUrl:1, urlCode:1})
+
+        if(findUrl){
+            await SET_ASYNC(`${longUrl}`, JSON.stringify(findUrl))
+            return res.status(200).send({status:false, message:"This Url is already Registered in DB", data:findUrl})
+        }
+
+        const baseUrl = 'http://localhost:3000'
 
         if(!/^(ftp|http|https):\/\/[^ "]+$/.test(baseUrl)){
             return res.status(400).send({status:false, message:"Please send valid base url"})
@@ -76,23 +77,21 @@ const shorten = async function(req,res){
 
         let shortUrl = baseUrl + "/" + urlCode
 
-        requestBody.urlCode = urlCode
-
-        requestBody.shortUrl = shortUrl
+        let newObj = {
+            longUrl : longUrl,
+            shortUrl : shortUrl,
+            urlCode : urlCode
+        }
  
-        await urlModel.create(requestBody)
-
-        let urlData = await urlModel.findOne({urlCode:urlCode}).select("longUrl shortUrl urlCode")
-        res.status(201).send({status:true, data:urlData})
+        await urlModel.create(newObj)
+        res.status(201).send({status:true, data:newObj})
 
     }
     catch(err)
     {
         console.log(err.message)
         res.status(500).send({status:false, Error:err.message})
-    }
-
-    
+    }   
 }
     
 
@@ -105,9 +104,10 @@ const getUrlCode = async function(req,res){
         let cachedUrlData = await GET_ASYNC(`${urlCode}`)
     
         if(cachedUrlData){
+            // console.log(cachedUrlData)
             return res.status(302).redirect(JSON.parse(cachedUrlData))
         }
-    
+   
         let findUrl = await urlModel.findOne({urlCode:urlCode}) 
     
         if(!findUrl){
@@ -115,7 +115,7 @@ const getUrlCode = async function(req,res){
         }
     
         await SET_ASYNC(`${urlCode}`, JSON.stringify(findUrl.longUrl))
-        res.status(200).redirect( findUrl.longUrl)
+        res.status(302).redirect( findUrl.longUrl)
 
     }
     catch(err)
@@ -125,9 +125,5 @@ const getUrlCode = async function(req,res){
 
     } 
 }
-
-
-
-
 
 module.exports = {shorten, getUrlCode}
